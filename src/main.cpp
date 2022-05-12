@@ -52,9 +52,6 @@ float_t targetSlipAngle = .1;
 
 float_t steeringRate = 1000; // Steering rate based on speed
 
-int32_t previousRPMCalcMicros = 0;
-const int32_t rpmCalcInterval = 5000; // Calculate the rpm every .005 seconds
-
 int32_t previousTractionControlMicros = 0;
 const int32_t tractionControlInterval = 10000; // Run the traction controller every .01 seconds
 
