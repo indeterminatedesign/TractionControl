@@ -16,7 +16,7 @@ const uint16_t standardChannelMin = 1000;
 const uint16_t standardChannelMax = 2000;
 const uint16_t standardChannelNeutral = 1500;
 
-const float_t kP = 5000;
+int32_t kP = 5000;
 
 #define THROTTLE_OUT_PIN 14
 #define STEERING_OUT_PIN 27
@@ -34,19 +34,18 @@ uint16_t SteeringOut = steeringCenter;
 #define IBUS_RX2_PIN 16
 #define IBUS_TX2_PIN 32 // Not used because I'm not sending back sensor data to the RX.  But must be defined...
 
-const int16_t frontPin = 2;
-const int16_t rearPin = 15;
-boolean frontPulseFlag = false;
-int32_t frontCurrentMicros = 0;
-int32_t frontPreviousMicros = 0;
-boolean rearPulseFlag = false;
-int32_t rearCurrentMicros = 0;
-int32_t rearPreviousMicros = 0;
+#define FRONT_PIN 2
+#define REAR_PIN 15
+
+volatile boolean frontPulseFlag = false;
+volatile int32_t frontCurrentMicros = 0;
+volatile int32_t frontPreviousMicros = 0;
+volatile boolean rearPulseFlag = false;
+volatile int32_t rearCurrentMicros = 0;
+volatile int32_t rearPreviousMicros = 0;
 
 float_t frontRPM = 0;
-float_t frontPreviousRPM = 0;
 float_t rearRPM = 0;
-float_t rearPreviousRPM = 0;
 
 float_t targetSlipAngle = .1;
 
@@ -56,7 +55,7 @@ int32_t previousTractionControlMicros = 0;
 const int32_t tractionControlInterval = 10000; // Run the traction controller every .01 seconds
 
 float EMA_function(float alpha, float latest, float stored);
-float calcRPM(int32_t currentMicros, int32_t previousMicros, float_t &currentRPM, float_t &previousRPM, boolean &flag);
+float_t calcRPM(int32_t currentMicros, int32_t previousMicros, float_t currentRPM, boolean flag);
 void processReceiverInput();
 void processRPM();
 void processTractionControl();
@@ -79,15 +78,15 @@ void IRAM_ATTR rearPulse()
 
 void setup()
 {
-  pinMode(frontPin, INPUT_PULLUP);
-  pinMode(rearPin, INPUT_PULLUP);
+  pinMode(FRONT_PIN, INPUT);
+  pinMode(REAR_PIN, INPUT);
   Serial.begin(115200);
 
   // Ibus process for reciever data
   IBus.begin(Serial2, IBUSBM_NOTIMER, IBUS_RX2_PIN, IBUS_TX2_PIN);
 
-  attachInterrupt(frontPin, frontPulse, FALLING);
-  attachInterrupt(rearPin, rearPulse, FALLING);
+  attachInterrupt(FRONT_PIN, frontPulse, RISING);
+  attachInterrupt(REAR_PIN, rearPulse, RISING);
 
   // Attach Servos
   servoThrottle.attach(THROTTLE_OUT_PIN);
@@ -118,7 +117,8 @@ void processReceiverInput()
     steeringCalibrated = true;
   }
 
-  // Setpoint used for traction control and braking
+  // kp channel 5
+  kP = map(IBus.readChannel(4), standardChannelMin, standardChannelMax, 1000, 20000);
   // Channel 6
   targetSlipAngle = map(IBus.readChannel(5), standardChannelMin, standardChannelMax, 0, 20) / 100.00;
   // Serial.print("Slip Angle Target ");
@@ -149,18 +149,28 @@ void processReceiverInput()
   Process RPM
 ***********************************************************************************/
 void processRPM()
+
+////  WHICH GPIOS have internal pullups??????????????????
 {
-  //DEBUG  
- /*
+  // DEBUG
+  frontRPM = calcRPM(frontCurrentMicros, frontPreviousMicros, frontRPM, frontPulseFlag);
+  rearRPM = calcRPM(rearCurrentMicros, rearPreviousMicros, rearRPM, rearPulseFlag);
+  
   if (frontPulseFlag || rearPulseFlag)
   {
     Serial.print(frontRPM);
     Serial.print(",");
     Serial.println(rearRPM);
   }
-  */
-  calcRPM(frontCurrentMicros, frontPreviousMicros, frontRPM, frontPreviousRPM, frontPulseFlag);
-  calcRPM(rearCurrentMicros, rearPreviousMicros, rearRPM, rearPreviousRPM, rearPulseFlag);
+
+  if(frontPulseFlag)
+  {
+    frontPulseFlag = false;
+  }
+    if(rearPulseFlag)
+  {
+    rearPulseFlag = false;
+  }
 
 }
 
@@ -204,7 +214,7 @@ void processTractionControl()
   }
 }
 
-float calcRPM(int32_t currentMicros, int32_t previousMicros, float_t &currentRPM, float_t &previousRPM, boolean &flag)
+float_t calcRPM(int32_t currentMicros, int32_t previousMicros, float_t currentRPM, boolean flag)
 {
   int32_t dt = currentMicros - previousMicros;
   int32_t dtSinceLastPulse = micros() - currentMicros; // Check to see how long it's been since a pulse came in
@@ -215,12 +225,10 @@ float calcRPM(int32_t currentMicros, int32_t previousMicros, float_t &currentRPM
   }
   else if (flag)
   {
-    previousRPM = currentRPM;
+    float_t previousRPM = currentRPM;
     currentRPM = (60 / (dt / 1000000.00)) / 4; // 4 magnets
 
     currentRPM = EMA_function(0.3, currentRPM, previousRPM);
-
-    flag = false;
   }
 
   return currentRPM;
