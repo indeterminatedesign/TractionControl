@@ -34,14 +34,14 @@ uint16_t SteeringOut = steeringCenter;
 #define IBUS_RX2_PIN 16
 #define IBUS_TX2_PIN 32 // Not used because I'm not sending back sensor data to the RX.  But must be defined...
 
-#define FRONT_PIN 2
-#define REAR_PIN 15
+#define FRONT_PIN 32
+#define REAR_PIN 33
 
 volatile boolean frontPulseFlag = false;
-volatile int32_t frontCurrentMicros = 0;
+volatile int32_t frontDT = 0;
 volatile int32_t frontPreviousMicros = 0;
 volatile boolean rearPulseFlag = false;
-volatile int32_t rearCurrentMicros = 0;
+volatile int32_t rearDT = 0;
 volatile int32_t rearPreviousMicros = 0;
 
 float_t frontRPM = 0;
@@ -54,39 +54,49 @@ float_t steeringRate = 1000; // Steering rate based on speed
 int32_t previousTractionControlMicros = 0;
 const int32_t tractionControlInterval = 10000; // Run the traction controller every .01 seconds
 
+portMUX_TYPE mux = portMUX_INITIALIZER_UNLOCKED;
+portMUX_TYPE mux1 = portMUX_INITIALIZER_UNLOCKED;
+
 float EMA_function(float alpha, float latest, float stored);
 float_t calcRPM(int32_t currentMicros, int32_t previousMicros, float_t currentRPM, boolean flag);
 void processReceiverInput();
 void processRPM();
 void processTractionControl();
 
-// Add a pulse every time the hall sensor changes state
+// pulse every time the hall sensor changes state
 void IRAM_ATTR frontPulse()
 {
-  frontPreviousMicros = frontCurrentMicros;
-  frontCurrentMicros = micros();
+
+  frontDT = micros() - frontPreviousMicros;
+  frontPreviousMicros = micros();
+  portENTER_CRITICAL_ISR(&mux);
   frontPulseFlag = true;
+  portEXIT_CRITICAL_ISR(&mux);
   // Serial.println("Front Pulse");
 }
 void IRAM_ATTR rearPulse()
 {
-  rearPreviousMicros = rearCurrentMicros;
-  rearCurrentMicros = micros();
+
+  rearDT = micros() - rearPreviousMicros;
+  rearPreviousMicros = micros();
+  portENTER_CRITICAL_ISR(&mux1);
   rearPulseFlag = true;
-  // Serial.println("Rear Pulse");
+  portEXIT_CRITICAL_ISR(&mux1);
+    Serial.println("Rear Pulse");
 }
 
 void setup()
 {
-  pinMode(FRONT_PIN, INPUT);
-  pinMode(REAR_PIN, INPUT);
+  pinMode(FRONT_PIN, INPUT_PULLUP);
+  pinMode(REAR_PIN, INPUT_PULLUP);
+
   Serial.begin(115200);
 
   // Ibus process for reciever data
-  IBus.begin(Serial2, IBUSBM_NOTIMER, IBUS_RX2_PIN, IBUS_TX2_PIN);
+  IBus.begin(Serial2, NOT_ON_TIMER, IBUS_RX2_PIN, IBUS_TX2_PIN);
 
-  attachInterrupt(FRONT_PIN, frontPulse, RISING);
-  attachInterrupt(REAR_PIN, rearPulse, RISING);
+  attachInterrupt(FRONT_PIN, frontPulse, CHANGE);
+  attachInterrupt(REAR_PIN, rearPulse, CHANGE);
 
   // Attach Servos
   servoThrottle.attach(THROTTLE_OUT_PIN);
@@ -150,28 +160,23 @@ void processReceiverInput()
 ***********************************************************************************/
 void processRPM()
 
-////  WHICH GPIOS have internal pullups??????????????????
 {
   // DEBUG
-  frontRPM = calcRPM(frontCurrentMicros, frontPreviousMicros, frontRPM, frontPulseFlag);
-  rearRPM = calcRPM(rearCurrentMicros, rearPreviousMicros, rearRPM, rearPulseFlag);
-  
+  frontRPM = calcRPM(frontDT, frontPreviousMicros, frontRPM, frontPulseFlag);
+  rearRPM = calcRPM(rearDT, rearPreviousMicros, rearRPM, rearPulseFlag);
+
   if (frontPulseFlag || rearPulseFlag)
   {
     Serial.print(frontRPM);
     Serial.print(",");
     Serial.println(rearRPM);
   }
-
-  if(frontPulseFlag)
-  {
-    frontPulseFlag = false;
-  }
-    if(rearPulseFlag)
-  {
-    rearPulseFlag = false;
-  }
-
+  portENTER_CRITICAL_ISR(&mux);
+  frontPulseFlag = false;
+  portEXIT_CRITICAL_ISR(&mux);
+  portENTER_CRITICAL_ISR(&mux1);
+  rearPulseFlag = false;
+  portEXIT_CRITICAL_ISR(&mux1);
 }
 
 /*************************************************************************************
@@ -214,21 +219,22 @@ void processTractionControl()
   }
 }
 
-float_t calcRPM(int32_t currentMicros, int32_t previousMicros, float_t currentRPM, boolean flag)
+float_t calcRPM(int32_t dt, int32_t previousMicros, float_t currentRPM, boolean flag)
 {
-  int32_t dt = currentMicros - previousMicros;
-  int32_t dtSinceLastPulse = micros() - currentMicros; // Check to see how long it's been since a pulse came in
+  int32_t dtSinceLastPulse = micros() - previousMicros; // Check to see how long it's been since a pulse came in
 
   if (dtSinceLastPulse >= 500000)
   {
-    currentRPM = 0;
+    return 0;
   }
-  else if (flag)
+
+  if (flag)
   {
     float_t previousRPM = currentRPM;
     currentRPM = (60 / (dt / 1000000.00)) / 4; // 4 magnets
 
-    currentRPM = EMA_function(0.3, currentRPM, previousRPM);
+    currentRPM = EMA_function(0.4, currentRPM, previousRPM);
+    // Serial.println(dt);
   }
 
   return currentRPM;
