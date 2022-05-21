@@ -34,7 +34,7 @@ uint16_t SteeringOut = steeringCenter;
 #define IBUS_RX2_PIN 16
 #define IBUS_TX2_PIN 32 // Not used because I'm not sending back sensor data to the RX.  But must be defined...
 
-#define FRONT_PIN 32
+#define FRONT_PIN 26
 #define REAR_PIN 33
 
 volatile boolean frontPulseFlag = false;
@@ -66,23 +66,29 @@ void processTractionControl();
 // pulse every time the hall sensor changes state
 void IRAM_ATTR frontPulse()
 {
-
-  frontDT = micros() - frontPreviousMicros;
-  frontPreviousMicros = micros();
-  portENTER_CRITICAL_ISR(&mux);
-  frontPulseFlag = true;
-  portEXIT_CRITICAL_ISR(&mux);
-  // Serial.println("Front Pulse");
+  int32_t temp = micros() - frontPreviousMicros;
+  if (temp > 3500)
+  {
+    frontDT = temp;
+    frontPreviousMicros = micros();
+    portENTER_CRITICAL_ISR(&mux);
+    frontPulseFlag = true;
+    portEXIT_CRITICAL_ISR(&mux);
+    // Serial.println("Front Pulse");
+  }
 }
 void IRAM_ATTR rearPulse()
 {
-
-  rearDT = micros() - rearPreviousMicros;
-  rearPreviousMicros = micros();
-  portENTER_CRITICAL_ISR(&mux1);
-  rearPulseFlag = true;
-  portEXIT_CRITICAL_ISR(&mux1);
-    Serial.println("Rear Pulse");
+  int32_t temp = micros() - rearPreviousMicros;
+  if (temp > 3500)
+  {
+    rearDT = temp;
+    rearPreviousMicros = micros();
+    portENTER_CRITICAL_ISR(&mux1);
+    rearPulseFlag = true;
+    portEXIT_CRITICAL_ISR(&mux1);
+    //Serial.println("Rear Pulse");
+  }
 }
 
 void setup()
@@ -93,10 +99,10 @@ void setup()
   Serial.begin(115200);
 
   // Ibus process for reciever data
-  IBus.begin(Serial2, NOT_ON_TIMER, IBUS_RX2_PIN, IBUS_TX2_PIN);
+  IBus.begin(Serial2, IBUSBM_NOTIMER, IBUS_RX2_PIN, IBUS_TX2_PIN);
 
-  attachInterrupt(FRONT_PIN, frontPulse, CHANGE);
-  attachInterrupt(REAR_PIN, rearPulse, CHANGE);
+  attachInterrupt(FRONT_PIN, frontPulse, FALLING);
+  attachInterrupt(REAR_PIN, rearPulse, FALLING);
 
   // Attach Servos
   servoThrottle.attach(THROTTLE_OUT_PIN);
@@ -162,8 +168,12 @@ void processRPM()
 
 {
   // DEBUG
+  // detachInterrupt(digitalPinToInterrupt(FRONT_PIN));
   frontRPM = calcRPM(frontDT, frontPreviousMicros, frontRPM, frontPulseFlag);
+  // attachInterrupt(FRONT_PIN, frontPulse, RISING);
+  // detachInterrupt(digitalPinToInterrupt(REAR_PIN));
   rearRPM = calcRPM(rearDT, rearPreviousMicros, rearRPM, rearPulseFlag);
+  // attachInterrupt(REAR_PIN, rearPulse, RISING);
 
   if (frontPulseFlag || rearPulseFlag)
   {
@@ -231,7 +241,7 @@ float_t calcRPM(int32_t dt, int32_t previousMicros, float_t currentRPM, boolean 
   if (flag)
   {
     float_t previousRPM = currentRPM;
-    currentRPM = (60 / (dt / 1000000.00)) / 4; // 4 magnets
+    currentRPM = (60 / (dt / 1000000.00)) / 2; // 2 falling events per rotation
 
     currentRPM = EMA_function(0.4, currentRPM, previousRPM);
     // Serial.println(dt);
