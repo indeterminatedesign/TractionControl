@@ -6,6 +6,9 @@
 *.lo
 *.o
 *.obj
+*.bin
+*.dblite
+*.elf
 
 # Precompiled Headers
 *.gch
@@ -36,3 +39,4 @@
 .pio/build/esp32dev/firmware.bin
 .pio/build/esp32dev/firmware.elf
 .pio/build/esp32dev/.sconsign39.dblite
+.pio/build/esp32dev/firmware.bin
