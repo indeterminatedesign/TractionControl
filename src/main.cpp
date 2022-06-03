@@ -1,3 +1,8 @@
+//************************************************************************************************
+//Author: Inderterminate Design
+//Version 1.1
+//************************************************************************************************
+
 #include <Arduino.h>
 #include <IBusBM.h>
 #include <ESP32Servo.h>
@@ -35,7 +40,14 @@ uint16_t SteeringOut = steeringCenter;
 #define IBUS_TX2_PIN 32 // Not used because I'm not sending back sensor data to the RX.  But must be defined...
 
 #define FRONT_PIN 26
-#define REAR_PIN 33
+#define REAR_PIN 25
+#define TC_PIN 33
+
+uint32_t previousRPMMicros = 0;
+const int32_t rpmInterval = 50;
+
+// set number of hall trips for RPM reading (higher improves accuracy)
+uint16_t hall_thresh = 2;
 
 boolean frontPulseFlag = false;
 uint32_t frontDT = 0;
@@ -49,7 +61,7 @@ uint16_t rearPulseCount = 0;
 float_t frontRPM = 0;
 float_t rearRPM = 0;
 
-float_t targetSlipAngle = .1;
+float_t targetSlipPercent = .1;
 
 float_t steeringRate = 1000; // Steering rate based on speed
 
@@ -65,7 +77,6 @@ void processReceiverInput();
 void processRPM();
 void processTractionControl();
 
-
 void setup()
 {
   pinMode(FRONT_PIN, INPUT_PULLUP);
@@ -79,6 +90,7 @@ void setup()
   // Attach Servos
   servoThrottle.attach(THROTTLE_OUT_PIN);
   servoSteering.attach(STEERING_OUT_PIN);
+
 }
 
 void loop()
@@ -108,7 +120,7 @@ void processReceiverInput()
   // kp channel 5
   kP = map(IBus.readChannel(4), standardChannelMin, standardChannelMax, 1000, 20000);
   // Channel 6
-  targetSlipAngle = map(IBus.readChannel(5), standardChannelMin, standardChannelMax, 0, 20) / 100.00;
+  targetSlipPercent = map(IBus.readChannel(5), standardChannelMin, standardChannelMax, 0, 20) / 100.00;
   // Serial.print("Slip Angle Target ");
   // Serial.println(targetSlipAngle);
 
@@ -136,13 +148,7 @@ void processReceiverInput()
 /*************************************************************************************
   Process RPM
 ***********************************************************************************/
-uint32_t previousRPMMicros = 0;
-const int32_t rpmInterval = 1000;
-
-// set number of hall trips for RPM reading (higher improves accuracy)
-uint16_t hall_thresh = 2;
 void processRPM()
-
 {
   uint32_t dt = micros() - previousRPMMicros;
   if (dt > rpmInterval)
@@ -150,11 +156,10 @@ void processRPM()
     frontRPM = calcRPM(frontStartMicros, frontRPM, frontPulseFlag, frontPulseCount, FRONT_PIN);
     rearRPM = calcRPM(rearStartMicros, rearRPM, rearPulseFlag, rearPulseCount, REAR_PIN);
   }
-  /*
+
   Serial.print(frontRPM);
   Serial.print(",");
   Serial.println(rearRPM);
-  */
 }
 
 /*************************************************************************************
@@ -162,21 +167,24 @@ void processRPM()
 ***********************************************************************************/
 void processTractionControl()
 {
+  static float_t previousPercentSlip;
   if (micros() - previousTractionControlMicros > tractionControlInterval)
   {
     // Serial.println(frontRPM);
     float_t currentPercentSlip = 0;
-    if (frontRPM > 0)
+    if (frontRPM > 30 && throttleIn > 1550)  //Added throttle in as a safety 6/2
     {
       currentPercentSlip = (rearRPM - frontRPM) / frontRPM;     // will be positive if rear is spinning faster
       currentPercentSlip = constrain(currentPercentSlip, 0, 1); // Current percent slip only positive for this, and cannot exceed 100% or 1
-                                                                // Serial.print("Current Slip Angle ");
+      currentPercentSlip = EMA_function(0.4, currentPercentSlip, previousPercentSlip);
+      // Serial.print("Current Slip Angle ");
       // Serial.println(currentPercentSlip);
     }
 
-    if (targetSlipAngle < currentPercentSlip)
+    if (targetSlipPercent < currentPercentSlip)
     {
-      float_t slipError = currentPercentSlip - targetSlipAngle;
+      // digitalWrite(TC_PIN, HIGH);
+      float_t slipError = currentPercentSlip - targetSlipPercent;
       int32_t correction = kP * slipError;
       correction = constrain(correction, 0, 500); // Correction cannot be greater than 500 or less than 0
       throttleOut = throttleIn - correction;
@@ -191,26 +199,28 @@ void processTractionControl()
     else
     {
       throttleOut = throttleIn;
+      // digitalWrite(TC_PIN,LOW);
     }
 
     servoThrottle.writeMicroseconds(throttleOut);
   }
 }
 
+/*************************************************************************************
+  Calculate RPM
+***********************************************************************************/
 float_t calcRPM(uint32_t &startMicros, float_t currentRPM, boolean &flag, uint16_t &pulseCount, uint16_t pin)
 {
-  
+
   int32_t dtSinceLastPulse = micros() - startMicros; // Check to see how long it's been since a pulse came in
 
-  dtSinceLastPulse = dtSinceLastPulse/ (pulseCount +1);
+  dtSinceLastPulse = dtSinceLastPulse / (pulseCount + 1);
 
-
-  if (dtSinceLastPulse >= 1000000)
+  if (dtSinceLastPulse >= 500000)
   {
     pulseCount = 0;
     flag = false;
     startMicros = micros();
-    Serial.println("0 RPM)");
     return 0;
   }
 
@@ -220,7 +230,7 @@ float_t calcRPM(uint32_t &startMicros, float_t currentRPM, boolean &flag, uint16
     {
       flag = true;
       pulseCount++;
-     //Serial.println("Pulse ++)");
+      // Serial.println(pulseCount);
     }
   }
   else
@@ -232,9 +242,8 @@ float_t calcRPM(uint32_t &startMicros, float_t currentRPM, boolean &flag, uint16
   {
     // print information about Time and RPM
     uint32_t end_time = micros();
-    float_t time_passed = ((end_time - startMicros) / 1000000.0);
-    currentRPM = ((pulseCount / time_passed) * 60.0) / 2.0;
-    //Serial.println(currentRPM);
+    double_t time_passed = ((end_time - startMicros) / 1000000.0);
+    currentRPM = ((pulseCount / time_passed) * 60.0) / 4.0;
     startMicros = micros();
     pulseCount = 0;
   }
@@ -242,6 +251,9 @@ float_t calcRPM(uint32_t &startMicros, float_t currentRPM, boolean &flag, uint16
   return currentRPM;
 }
 
+/*************************************************************************************
+  EMA Function (Simple Filter)
+***********************************************************************************/
 float EMA_function(float alpha, float latest, float stored)
 {
   return (alpha * latest) + ((1 - alpha) * stored);
