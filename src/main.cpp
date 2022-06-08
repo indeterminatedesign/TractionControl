@@ -1,7 +1,10 @@
-//************************************************************************************************
-//Author: Inderterminate Design
-//Version 1.1
-//************************************************************************************************
+/************************************************************************************************
+Author: Inderterminate Design
+Version: 1.2
+Date: 6/7/2022
+-Added the integral term to make the this a PI controller. I found that the integral term allows
+for a much lower proportional gain and lessens oscillation from the traction control.
+************************************************************************************************/
 
 #include <Arduino.h>
 #include <IBusBM.h>
@@ -21,7 +24,9 @@ const uint16_t standardChannelMin = 1000;
 const uint16_t standardChannelMax = 2000;
 const uint16_t standardChannelNeutral = 1500;
 
-int32_t kP = 5000;
+uint16_t kP = 5000;
+uint16_t kI = 500;
+float_t cumulativeError; // for PI Controller
 
 #define THROTTLE_OUT_PIN 14
 #define STEERING_OUT_PIN 27
@@ -118,9 +123,9 @@ void processReceiverInput()
   }
 
   // kp channel 5
-  kP = map(IBus.readChannel(4), standardChannelMin, standardChannelMax, 1000, 20000);
+  kP = map(IBus.readChannel(4), standardChannelMin, standardChannelMax, 500, 5000);
   // Channel 6
-  targetSlipPercent = map(IBus.readChannel(5), standardChannelMin, standardChannelMax, 0, 20) / 100.00;
+  targetSlipPercent = map(IBus.readChannel(5), standardChannelMin, standardChannelMax, 0, 25) / 100.00;
   // Serial.print("Slip Angle Target ");
   // Serial.println(targetSlipAngle);
 
@@ -176,7 +181,7 @@ void processTractionControl()
     {
       currentPercentSlip = (rearRPM - frontRPM) / frontRPM;     // will be positive if rear is spinning faster
       currentPercentSlip = constrain(currentPercentSlip, 0, 1); // Current percent slip only positive for this, and cannot exceed 100% or 1
-      currentPercentSlip = EMA_function(0.4, currentPercentSlip, previousPercentSlip);
+      currentPercentSlip = EMA_function(0.8, currentPercentSlip, previousPercentSlip);
       // Serial.print("Current Slip Angle ");
       // Serial.println(currentPercentSlip);
     }
@@ -185,7 +190,9 @@ void processTractionControl()
     {
       // digitalWrite(TC_PIN, HIGH);
       float_t slipError = currentPercentSlip - targetSlipPercent;
-      int32_t correction = kP * slipError;
+      cumulativeError += slipError * tractionControlInterval; 
+      int32_t correction = kP * slipError + kI * cumulativeError;
+
       correction = constrain(correction, 0, 500); // Correction cannot be greater than 500 or less than 0
       throttleOut = throttleIn - correction;
       throttleOut = constrain(throttleOut, throttleNeutral, throttleMax); // Don't allow the traction control to turn on braking or exceed the boundaries
@@ -199,7 +206,7 @@ void processTractionControl()
     else
     {
       throttleOut = throttleIn;
-      // digitalWrite(TC_PIN,LOW);
+      cumulativeError = 0;
     }
 
     servoThrottle.writeMicroseconds(throttleOut);
@@ -242,7 +249,7 @@ float_t calcRPM(uint32_t &startMicros, float_t currentRPM, boolean &flag, uint16
   {
     // print information about Time and RPM
     uint32_t end_time = micros();
-    double_t time_passed = ((end_time - startMicros) / 1000000.0);
+    double_t time_passed = ((end_time - startMicros) / 1e6);
     currentRPM = ((pulseCount / time_passed) * 60.0) / 4.0;
     startMicros = micros();
     pulseCount = 0;
