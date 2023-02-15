@@ -39,7 +39,7 @@ uint16_t throttleIn = throttleNeutral;
 uint16_t steeringIn = steeringCenter;
 
 uint16_t throttleOut = throttleMin;
-uint16_t SteeringOut = steeringCenter;
+uint16_t steeringOut = steeringCenter;
 
 #define IBUS_RX2_PIN 16
 #define IBUS_TX2_PIN 32 // Not used because I'm not sending back sensor data to the RX.  But must be defined...
