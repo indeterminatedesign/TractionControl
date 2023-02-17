@@ -79,7 +79,7 @@ portMUX_TYPE mux1 = portMUX_INITIALIZER_UNLOCKED;
 float EMA_function(float alpha, float latest, float stored);
 float_t calcRPM(uint32_t &startMicros, float_t currentRPM, boolean &flag, uint16_t &pulseCount, uint16_t pin);
 void processReceiverInput();
-void processRPM();
+void processWheelSpeed();
 void processTractionControl();
 
 void setup()
@@ -101,7 +101,7 @@ void setup()
 void loop()
 {
   processReceiverInput();
-  processRPM();
+  processWheelSpeed();
   processTractionControl();
 }
 
@@ -153,13 +153,14 @@ void processReceiverInput()
 /*************************************************************************************
   Process RPM
 ***********************************************************************************/
-void processRPM()
+void processWheelSpeed()
 {
   uint32_t dt = micros() - previousRPMMicros;
   if (dt > rpmInterval)
   {
     frontRPM = calcRPM(frontStartMicros, frontRPM, frontPulseFlag, frontPulseCount, FRONT_PIN);
     rearRPM = calcRPM(rearStartMicros, rearRPM, rearPulseFlag, rearPulseCount, REAR_PIN);
+    previousRPMMicros = micros();
   }
 
   Serial.print(frontRPM);
@@ -210,6 +211,7 @@ void processTractionControl()
     }
 
     servoThrottle.writeMicroseconds(throttleOut);
+    previousTractionControlMicros = micros();
   }
 }
 
@@ -251,7 +253,6 @@ float_t calcRPM(uint32_t &startMicros, float_t currentRPM, boolean &flag, uint16
     uint32_t end_time = micros();
     double_t time_passed = ((end_time - startMicros) / 1e6);
     currentRPM = ((pulseCount / time_passed) * 60.0) / 4.0;
-    startMicros = micros();
     pulseCount = 0;
   }
 
